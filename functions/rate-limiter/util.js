@@ -21,16 +21,21 @@
 const TWENTY_FOUR_HOURS_IN_MS = 86400000;
 
 /**
- * Gets today's date in YYYYMMDD format for use in Valkey keys.
+ * Gets today's date in YYYYMMDD format for use in rate-limit bucket keys.
+ *
+ * Uses UTC so the bucket boundary matches the documented retention rule
+ * ("rate-limit docs auto-delete after their expiresAt (end of UTC day)") and the
+ * UTC-based expiry computed by getFirestoreTimestamp(). Using local time here made
+ * the bucket roll over at the host's midnight, which disagreed with the expiry.
  *
  * @private
- * @returns {string} Today's date as YYYYMMDD
+ * @returns {string} Today's UTC date as YYYYMMDD
  */
 function getToday() {
   const today = new Date();
-  const dd = String(today.getDate()).padStart(2, '0');
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const yyyy = today.getFullYear();
+  const dd = String(today.getUTCDate()).padStart(2, '0');
+  const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = today.getUTCFullYear();
   return yyyy + mm + dd;
 }
 

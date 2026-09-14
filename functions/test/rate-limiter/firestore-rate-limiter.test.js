@@ -205,13 +205,15 @@ describe('FirestoreRateLimiter', () => {
       const rateLimiter = new FirestoreRateLimiter(maxNotificationsPerDay);
       const status = await rateLimiter.checkRateLimit(testToken);
 
+      // Read in UTC: the reset boundary is end of UTC day, so local getters would
+      // assert different numbers depending on the host timezone.
       const resetsAt = status.rateLimits.resetsAt;
-      expect(resetsAt.getFullYear()).toBe(2024);
-      expect(resetsAt.getMonth()).toBe(0); // January (0-indexed)
-      expect(resetsAt.getDate()).toBe(2); // Next day
-      expect(resetsAt.getHours()).toBe(0);
-      expect(resetsAt.getMinutes()).toBe(0);
-      expect(resetsAt.getSeconds()).toBe(0);
+      expect(resetsAt.getUTCFullYear()).toBe(2024);
+      expect(resetsAt.getUTCMonth()).toBe(0); // January (0-indexed)
+      expect(resetsAt.getUTCDate()).toBe(2); // Next day
+      expect(resetsAt.getUTCHours()).toBe(0);
+      expect(resetsAt.getUTCMinutes()).toBe(0);
+      expect(resetsAt.getUTCSeconds()).toBe(0);
     });
 
     test('should handle multiple instances for same token', async () => {

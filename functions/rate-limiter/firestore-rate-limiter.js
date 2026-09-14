@@ -229,7 +229,8 @@ class FirestoreRateLimiter {
       total: doc.totalCount || 0,
       maximum: this.maxNotificationsPerDay,
       remaining: remainingCount,
-      resetsAt: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1),
+      // UTC: must match getToday() and the end-of-UTC-day expiry.
+      resetsAt: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)),
     };
   }
 }
