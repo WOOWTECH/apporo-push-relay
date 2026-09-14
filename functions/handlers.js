@@ -211,7 +211,7 @@ function handleError(req, res, payload = {}, step, incomingError, shouldExit = t
   }
 
   // Report all other errors before responding
-  return reportError(incomingError, step, req, payload).then(() => {
+  return reportError(incomingError, step, req).then(() => {
     if (!shouldExit) {
       return true;
     }
@@ -225,15 +225,13 @@ function handleError(req, res, payload = {}, step, incomingError, shouldExit = t
   });
 }
 
-function reportError(err, step, req, notificationObj) {
+// Error logs must not carry notification content, push tokens, or client IP/User-Agent:
+// the relay only forwards notifications and does not retain what it forwards.
+function reportError(err, step, req) {
   const logName = 'errors-' + step;
   const log = logging.log(logName);
 
-  const labels = {
-    step,
-    requestBody: JSON.stringify(req.body),
-    notification: JSON.stringify(notificationObj),
-  };
+  const labels = { step };
 
   if (req.body.registration_info) {
     labels.appID = req.body.registration_info.app_id;
@@ -267,10 +265,7 @@ function reportError(err, step, req, notificationObj) {
       httpRequest: {
         method: req.method,
         url: req.originalUrl,
-        userAgent: req.get('user-agent'),
-        remoteIp: req.ip,
       },
-      user: req.body.push_token,
     },
   };
 
@@ -340,8 +335,6 @@ function buildLogMetadata(req) {
     httpRequest: {
       requestMethod: req.method,
       requestUrl: req.originalUrl,
-      userAgent: req.get('user-agent'),
-      remoteIp: req.ip,
     },
   };
 }

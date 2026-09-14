@@ -19,6 +19,12 @@ const PinoLevelToSeverityLookup = {
 
 const loggerConfig = {
   messageKey: 'message',
+  // Fastify's default request serializer records the client IP; keep only what routing needs.
+  serializers: {
+    req(request) {
+      return { method: request.method, url: request.url };
+    },
+  },
   // Same as pino.stdTimeFunctions.isoTime but uses "timestamp" key instead of "time"
   /**
    * @returns {string}

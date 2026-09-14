@@ -198,6 +198,42 @@ describe('handleRequest', () => {
     });
   });
 
+  test('error logs contain no notification content, push token, or client identity', async () => {
+    const logged = [];
+    const capturingLog = () => ({
+      write: jest.fn((entry, callback) => callback()),
+      entry: jest.fn((...args) => {
+        logged.push(args);
+        return {};
+      }),
+    });
+    mockLogging.log.mockImplementation(capturingLog);
+    try {
+      req = createMockRequest();
+      req.body.message = 'Front door opened';
+      req.body.title = 'Door alert';
+      payloadHandler = createMockPayloadHandler({
+        payload: { notification: { body: 'Front door opened', title: 'Door alert' } },
+      });
+      mockMessaging.send.mockRejectedValue(new Error('FCM send failed'));
+
+      await indexModule.handleRequest(req, res, payloadHandler);
+
+      expect(logged.length).toBeGreaterThan(0);
+      const serialized = JSON.stringify(logged);
+      expect(serialized).not.toContain('Front door opened');
+      expect(serialized).not.toContain('Door alert');
+      expect(serialized).not.toContain('test:token123');
+      expect(serialized).not.toContain('127.0.0.1');
+      expect(serialized).not.toContain('test-user-agent');
+    } finally {
+      mockLogging.log.mockImplementation(() => ({
+        write: jest.fn((entry, callback) => callback()),
+        entry: jest.fn(() => ({})),
+      }));
+    }
+  });
+
   test('should reject notifications over rate limit', async () => {
     // Set up doc over rate limit
     docSnapshot.exists = true;

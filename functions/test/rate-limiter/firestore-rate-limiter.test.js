@@ -46,6 +46,8 @@ describe('FirestoreRateLimiter', () => {
   let mockDataManager;
   let rateLimiter;
   const testToken = 'test-token-123';
+  // The limiter keys documents by sha256(token); the mock store must use the same key.
+  const testTokenDocId = require('crypto').createHash('sha256').update(testToken).digest('hex');
   const maxNotificationsPerDay = 150;
 
   beforeEach(() => {
@@ -80,18 +82,18 @@ describe('FirestoreRateLimiter', () => {
       const mockTransaction = {
         get: async () => {
           return {
-            exists: mockDataManager.hasRateLimitData(testToken, getToday()),
-            data: () => mockDataManager.getRateLimitData(testToken, getToday()),
+            exists: mockDataManager.hasRateLimitData(testTokenDocId, getToday()),
+            data: () => mockDataManager.getRateLimitData(testTokenDocId, getToday()),
           };
         },
         set: async (_, data) => {
-          mockDataManager.setRateLimitData(testToken, getToday(), data);
+          mockDataManager.setRateLimitData(testTokenDocId, getToday(), data);
           mockSet(data);
         },
         update: async (_, data) => {
-          const existing = mockDataManager.getRateLimitData(testToken, getToday()) || {};
+          const existing = mockDataManager.getRateLimitData(testTokenDocId, getToday()) || {};
           const updated = Object.assign({}, existing, data);
-          mockDataManager.setRateLimitData(testToken, getToday(), updated);
+          mockDataManager.setRateLimitData(testTokenDocId, getToday(), updated);
           mockUpdate(data);
         },
       };
@@ -116,6 +118,18 @@ describe('FirestoreRateLimiter', () => {
         errors: 0,
         remaining: maxNotificationsPerDay,
       });
+    });
+
+    test('keys rate-limit documents by a hash of the token, never the raw token', async () => {
+      const rateLimiter = new FirestoreRateLimiter(maxNotificationsPerDay);
+      await rateLimiter.checkRateLimit(testToken);
+      await rateLimiter.recordAttempt(testToken);
+      await rateLimiter.recordSuccess(testToken);
+
+      const docIds = mockDoc.mock.calls.map(([id]) => id);
+      const expectedHash = require('crypto').createHash('sha256').update(testToken).digest('hex');
+      expect(docIds).not.toContain(testToken);
+      expect(docIds).toContain(expectedHash);
     });
 
     // Parameterized tests for counter increments
@@ -195,7 +209,7 @@ describe('FirestoreRateLimiter', () => {
       await rateLimiter.recordAttempt(testToken);
       await rateLimiter.recordSuccess(testToken);
 
-      const storedData = mockDataManager.getRateLimitData(testToken, getToday());
+      const storedData = mockDataManager.getRateLimitData(testTokenDocId, getToday());
       expect(storedData).toBeDefined();
       expect(storedData.deliveredCount).toBe(1);
       expect(storedData.attemptsCount).toBe(1);
@@ -261,7 +275,7 @@ describe('FirestoreRateLimiter', () => {
 
       // Create a doc with more delivered than max allowed
       mockDataManager.setRateLimitData(
-        testToken,
+        testTokenDocId,
         getToday(),
         createMockRateLimitData({
           attemptsCount: 10,
@@ -280,7 +294,7 @@ describe('FirestoreRateLimiter', () => {
       const rateLimiter = new FirestoreRateLimiter(maxNotificationsPerDay);
 
       // Create a doc with missing fields
-      mockDataManager.setRateLimitData(testToken, getToday(), {
+      mockDataManager.setRateLimitData(testTokenDocId, getToday(), {
         deliveredCount: 5,
         totalCount: 5,
         // Missing attemptsCount, errorCount, etc.
@@ -431,7 +445,7 @@ describe('FirestoreRateLimiter', () => {
 
       await rateLimiter.recordAttempt(testToken);
 
-      const storedData = mockDataManager.getRateLimitData(testToken, getToday());
+      const storedData = mockDataManager.getRateLimitData(testTokenDocId, getToday());
       expect(storedData).toBeDefined();
 
       // Verify Timestamp.fromDate was called with end of day
@@ -451,7 +465,7 @@ describe('FirestoreRateLimiter', () => {
       await rateLimiter.recordAttempt(testToken);
 
       // Should use 20231231 as the date
-      const storedData = mockDataManager.getRateLimitData(testToken, '20231231');
+      const storedData = mockDataManager.getRateLimitData(testTokenDocId, '20231231');
       expect(storedData).toBeDefined();
     });
   });

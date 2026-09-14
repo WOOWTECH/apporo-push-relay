@@ -1,5 +1,6 @@
 'use strict';
 
+const { createHash } = require('crypto');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 
 const { getToday, TWENTY_FOUR_HOURS_IN_MS } = require('./util');
@@ -47,7 +48,8 @@ class FirestoreRateLimiter {
    */
   _getDocRef(token) {
     const today = getToday();
-    return this.db.collection('rateLimits').doc(today).collection('tokens').doc(token);
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    return this.db.collection('rateLimits').doc(today).collection('tokens').doc(tokenHash);
   }
 
   /**
