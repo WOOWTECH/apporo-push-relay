@@ -28,12 +28,15 @@ if (useValkey) {
 }
 
 async function handleCheckRateLimits(req, res) {
-  const { push_token: token } = req.body;
+  // `req.body` is undefined when the request carries no body (or an unparsed one),
+  // and `push_token` may be any JSON type. Both used to throw before validation and
+  // surface as a 500; they now fall into the existing 403 contract below.
+  const { push_token: token } = req.body || {};
   if (!token) {
     return res.status(403).send({ errorMessage: 'You did not send a token!' });
   }
-  if (token.indexOf(':') === -1) {
-    // A check for old SNS tokens
+  if (typeof token !== 'string' || token.indexOf(':') === -1) {
+    // A check for old SNS tokens, and for non-string tokens
     return res.status(403).send({ errorMessage: 'That is not a valid FCM token' });
   }
 
@@ -55,12 +58,15 @@ async function handleRequest(req, res, payloadHandler) {
   if (debug) {
     log.debug(log.entry(metadata, { message: 'Handling request' }));
   }
-  const { push_token: token } = req.body;
+  // `req.body` is undefined when the request carries no body (or an unparsed one),
+  // and `push_token` may be any JSON type. Both used to throw before validation and
+  // surface as a 500; they now fall into the existing 403 contract below.
+  const { push_token: token } = req.body || {};
   if (!token) {
     return res.status(403).send({ errorMessage: 'You did not send a token!' });
   }
-  if (token.indexOf(':') === -1) {
-    // A check for old SNS tokens
+  if (typeof token !== 'string' || token.indexOf(':') === -1) {
+    // A check for old SNS tokens, and for non-string tokens
     return res.status(403).send({ errorMessage: 'That is not a valid FCM token' });
   }
 

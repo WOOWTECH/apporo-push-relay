@@ -12,6 +12,7 @@ const {
 const {
   assertFirestoreOps,
   assertMessaging,
+  assertRateLimits,
   assertResponse,
   assertSuccessfulFlow,
   assertRateLimitedFlow,
@@ -293,6 +294,110 @@ describe('handleRequest', () => {
     expect(docRef.get).not.toHaveBeenCalled();
   });
 
+  test('should reject a request with no body instead of throwing', async () => {
+    const testReq = createMockRequest();
+    delete testReq.body;
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    assertMessaging.expectNoMessageSent(mockMessaging);
+    expect(docRef.get).not.toHaveBeenCalled();
+  });
+
+  test('should reject a request whose body is null instead of throwing', async () => {
+    const testReq = createMockRequest();
+    testReq.body = null;
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    assertMessaging.expectNoMessageSent(mockMessaging);
+    expect(docRef.get).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['a number', 12345],
+    ['an object', { value: 'test:token123' }],
+    ['an array', ['test:token123']],
+    ['a boolean', true],
+  ])('should reject a push_token that is %s', async (_label, value) => {
+    const testReq = createMockRequest({ body: { push_token: value } });
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'That is not a valid FCM token');
+    assertMessaging.expectNoMessageSent(mockMessaging);
+    expect(docRef.get).not.toHaveBeenCalled();
+  });
+
+  // Every rejected request must stop before the payload handler, the quota and FCM.
+  const expectNoDownstreamWork = () => {
+    expect(payloadHandler).not.toHaveBeenCalled();
+    expect(docRef.get).not.toHaveBeenCalled();
+    assertFirestoreOps.expectNoFirestoreOps(docRef);
+    expect(mockFirestore.runTransaction).not.toHaveBeenCalled();
+    assertMessaging.expectNoMessageSent(mockMessaging);
+  };
+
+  test.each([
+    ['a string', 'not-an-object'],
+    ['a number', 42],
+    ['a boolean', true],
+    ['an array', []],
+  ])('should reject a body that is %s instead of throwing', async (_label, body) => {
+    const testReq = createMockRequest();
+    testReq.body = body;
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  // Falsy tokens keep the original "missing token" semantics, not the format message.
+  test.each([
+    ['an empty string', ''],
+    ['zero', 0],
+    ['false', false],
+    ['null', null],
+  ])('should treat a push_token that is %s as a missing token', async (_label, value) => {
+    const testReq = createMockRequest({ body: { push_token: value } });
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  test('rejected requests do no downstream work (no body)', async () => {
+    const testReq = createMockRequest();
+    delete testReq.body;
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  test('rejected requests do no downstream work (non-string token)', async () => {
+    const testReq = createMockRequest({ body: { push_token: 12345 } });
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'That is not a valid FCM token');
+    expectNoDownstreamWork();
+  });
+
+  test('rejected requests do no downstream work (token without colon)', async () => {
+    const testReq = createMockRequest({ body: { push_token: 'invalid-token-without-colon' } });
+
+    await indexModule.handleRequest(testReq, res, payloadHandler);
+
+    assertResponse.expectForbiddenResponse(res, 'That is not a valid FCM token');
+    expectNoDownstreamWork();
+  });
+
   test('should handle Firestore read errors', async () => {
     docRef.get.mockRejectedValue(new Error('Firestore read failed'));
 
@@ -302,5 +407,148 @@ describe('handleRequest', () => {
       errorType: 'InternalError',
       errorStep: 'getRateLimitDoc',
     });
+  });
+});
+
+describe('handleCheckRateLimits', () => {
+  let res, docRef, docSnapshot;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockMessaging.send.mockResolvedValue('mock-message-id');
+    res = createMockResponse();
+
+    docSnapshot = { exists: false, data: jest.fn(() => createMockRateLimitData()) };
+    docRef = createMockDocRef(docSnapshot);
+    setupFirestoreCollectionChain(mockFirestore, docRef);
+  });
+
+  // Every rejected request must stop before the quota is read or written and before FCM.
+  const expectNoDownstreamWork = () => {
+    expect(docRef.get).not.toHaveBeenCalled();
+    assertFirestoreOps.expectNoFirestoreOps(docRef);
+    expect(mockFirestore.runTransaction).not.toHaveBeenCalled();
+    assertMessaging.expectNoMessageSent(mockMessaging);
+  };
+
+  test('should return counts for a valid token', async () => {
+    const testReq = createMockRequest();
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const response = res.send.mock.calls[0][0];
+    expect(response.target).toBe('test:token123');
+    expect(response.rateLimits).toBeDefined();
+    assertRateLimits.expectRateLimitCounts(response.rateLimits, {
+      attempts: 0,
+      successful: 0,
+      errors: 0,
+      total: 0,
+    });
+    expect(response.rateLimits.maximum).toBe(500);
+    expect(response.rateLimits.remaining).toBe(500);
+    expect(response.rateLimits.resetsAt).toBeInstanceOf(Date);
+
+    // Reading the quota must not write to it, and must not send anything.
+    expect(docRef.get).toHaveBeenCalledTimes(1);
+    assertFirestoreOps.expectNoFirestoreOps(docRef);
+    assertMessaging.expectNoMessageSent(mockMessaging);
+  });
+
+  test('should surface Firestore read errors with the documented error contract', async () => {
+    docRef.get.mockRejectedValue(new Error('Firestore read failed'));
+    const testReq = createMockRequest();
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectErrorResponse(res, 500, {
+      errorType: 'InternalError',
+      errorStep: 'getRateLimitDoc',
+    });
+    assertMessaging.expectNoMessageSent(mockMessaging);
+  });
+
+  test('should reject a request with no body instead of throwing', async () => {
+    const testReq = createMockRequest();
+    delete testReq.body;
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  test('should reject a request whose body is null instead of throwing', async () => {
+    const testReq = createMockRequest();
+    testReq.body = null;
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  test.each([
+    ['a string', 'not-an-object'],
+    ['a number', 42],
+    ['a boolean', true],
+    ['an array', []],
+  ])('should reject a body that is %s instead of throwing', async (_label, body) => {
+    const testReq = createMockRequest();
+    testReq.body = body;
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  test('should reject a missing token', async () => {
+    const testReq = createMockRequest();
+    delete testReq.body.push_token;
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  // Falsy tokens keep the original "missing token" semantics, not the format message.
+  test.each([
+    ['an empty string', ''],
+    ['zero', 0],
+    ['false', false],
+    ['null', null],
+  ])('should treat a push_token that is %s as a missing token', async (_label, value) => {
+    const testReq = createMockRequest({ body: { push_token: value } });
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'You did not send a token!');
+    expectNoDownstreamWork();
+  });
+
+  test('should reject a token without a colon', async () => {
+    const testReq = createMockRequest({ body: { push_token: 'invalid-token-without-colon' } });
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'That is not a valid FCM token');
+    expectNoDownstreamWork();
+  });
+
+  test.each([
+    ['a number', 12345],
+    ['an object', { value: 'test:token123' }],
+    ['an array', ['test:token123']],
+    ['a boolean', true],
+  ])('should reject a push_token that is %s', async (_label, value) => {
+    const testReq = createMockRequest({ body: { push_token: value } });
+
+    await indexModule.handleCheckRateLimits(testReq, res);
+
+    assertResponse.expectForbiddenResponse(res, 'That is not a valid FCM token');
+    expectNoDownstreamWork();
   });
 });
