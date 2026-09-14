@@ -3,6 +3,9 @@
 const path = require('path');
 const liveActivity = require('./live-activity.js');
 
+// Matched as substrings so .dev/.beta variants of each bundle ID are included.
+const IOS_APP_IDS = ['io.robbie.HomeAssistant', 'com.apporo.aiot'];
+
 module.exports = {
   createPayload: (req) => {
     if (req.body.live_activity_token) {
@@ -72,7 +75,7 @@ module.exports = {
       payload.apns.payload.webhook_id = req.body.registration_info.webhook_id;
     }
 
-    if (req.body.registration_info.app_id.indexOf('io.robbie.HomeAssistant') > -1) {
+    if (IOS_APP_IDS.some((id) => req.body.registration_info.app_id.indexOf(id) > -1)) {
       const addCommand = (command) => {
         payload.notification = {};
         payload.apns.payload.aps = {};

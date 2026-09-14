@@ -17,21 +17,21 @@
         "source": "/api/sendPushNotification",
         "run": {
           "serviceId": "mobile-push",
-          "region": "us-central1"
+          "region": "us-west1"
         }
       },
       {
         "source": "/api/sendPush/android/v1",
         "run": {
           "serviceId": "mobile-push",
-          "region": "us-central1"
+          "region": "us-west1"
         }
       },
       {
         "source": "/api/checkRateLimits",
         "run": {
           "serviceId": "mobile-push",
-          "region": "us-central1"
+          "region": "us-west1"
         }
       },
       {

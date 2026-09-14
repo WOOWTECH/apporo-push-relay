@@ -750,3 +750,32 @@ describe('handleRequest with Live Activity payload', () => {
     expect(response.rateLimits).toBeDefined();
   });
 });
+
+describe('rebranded iOS app IDs get the same command handling as the upstream app', () => {
+  const fixturesDir = './test/fixtures/legacy/';
+  const commandFixtures = fs
+    .readdirSync(fixturesDir)
+    .filter((file) => file.startsWith('command_') && file.endsWith('.json'));
+
+  it.each(commandFixtures)('%s behaves identically for com.apporo.aiot', (file) => {
+    const json = JSON.parse(fs.readFileSync(fixturesDir + file, 'utf8'));
+    const upstream = legacy.createPayload({ body: structuredClone(json.input) });
+
+    const rebranded = structuredClone(json.input);
+    rebranded.registration_info.app_id = rebranded.registration_info.app_id.replace(
+      'io.robbie.HomeAssistant',
+      'com.apporo.aiot',
+    );
+
+    expect(legacy.createPayload({ body: rebranded })).toEqual(upstream);
+  });
+
+  test('an unrelated app ID does not get command handling', () => {
+    const body = {
+      message: 'request_location_update',
+      registration_info: { app_id: 'com.example.other' },
+    };
+    const { payload } = legacy.createPayload({ body });
+    expect(payload.apns.payload.homeassistant).toBeUndefined();
+  });
+});
